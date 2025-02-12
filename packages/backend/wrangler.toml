@@ -1,0 +1,8 @@
+name = "gpa-calculator"
+main = "src/worker.js"
+compatibility_date = "2024-02-12"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gpa_calculator_db"
+database_id = "your-database-id"

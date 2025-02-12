@@ -1,0 +1,13 @@
+{
+  "name": "@gpa-calculator/backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo No build needed for backend",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20240208.0"
+  }
+}
