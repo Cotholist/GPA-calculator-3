@@ -20,15 +20,51 @@
             padding: 5px 10px;
             border-radius: 5px;
             font-size: 0.9em;
+            z-index: 1000;
         }
         .connected { background-color: #d4edda; color: #155724; }
         .disconnected { background-color: #f8d7da; color: #721c24; }
+        .connecting { background-color: #fff3cd; color: #856404; }
+        .loading { opacity: 0.6; pointer-events: none; }
+        .error-message {
+            color: #dc3545;
+            margin-top: 5px;
+            font-size: 0.9em;
+        }
+        #errorToast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px 20px;
+            border-radius: 4px;
+            display: none;
+            z-index: 1000;
+            max-width: 300px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        .spinner {
+            display: inline-block;
+            width: 1em;
+            height: 1em;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spinner-rotation 0.75s linear infinite;
+        }
+        @keyframes spinner-rotation {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
     <div id="connectionStatus" class="disconnected">
         未连接
     </div>
+
+    <div id="errorToast"></div>
 
     <div class="container mt-5">
         <h1 class="text-center mb-4">GPA 计算器</h1>
@@ -46,27 +82,33 @@
             <form id="courseForm">
                 <div class="mb-3">
                     <label for="courseName" class="form-label">课程名称</label>
-                    <input type="text" class="form-control" id="courseName" required>
+                    <input type="text" class="form-control" id="courseName" required maxlength="100">
+                    <div class="error-message" id="courseNameError"></div>
                 </div>
                 <div class="mb-3">
                     <label for="regularScore" class="form-label">平时成绩</label>
-                    <input type="number" class="form-control" id="regularScore" min="0" max="100" required>
+                    <input type="number" class="form-control" id="regularScore" min="0" max="100" step="0.1" required>
+                    <div class="error-message" id="regularScoreError"></div>
                 </div>
                 <div class="mb-3">
                     <label class="form-label">考试成绩</label>
                     <div id="examScores" class="exam-scores">
                         <div class="exam-score-input d-flex">
-                            <input type="number" class="form-control me-2" min="0" max="100" required>
+                            <input type="number" class="form-control me-2" min="0" max="100" step="0.1" required>
                             <button type="button" class="btn btn-danger" onclick="removeExamScore(this)">
                                 <i class="bi bi-trash"></i>
                             </button>
                         </div>
                     </div>
+                    <div class="error-message" id="examScoresError"></div>
                     <button type="button" class="btn btn-secondary mt-2" onclick="addExamScore()">
                         添加考试成绩
                     </button>
                 </div>
-                <button type="submit" class="btn btn-primary">添加课程</button>
+                <button type="submit" class="btn btn-primary" id="submitButton">
+                    <span class="spinner d-none"></span>
+                    添加课程
+                </button>
             </form>
         </div>
 
@@ -96,57 +138,58 @@
         let ws;
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 5;
+        const reconnectDelay = 1000; // 初始重连延迟（毫秒）
+
+        function showError(message, duration = 3000) {
+            const toast = document.getElementById('errorToast');
+            toast.textContent = message;
+            toast.style.display = 'block';
+            setTimeout(() => {
+                toast.style.display = 'none';
+            }, duration);
+        }
+
+        function updateConnectionStatus(status, message) {
+            const statusElement = document.getElementById('connectionStatus');
+            statusElement.className = status;
+            statusElement.textContent = message;
+        }
 
         function connectWebSocket() {
+            updateConnectionStatus('connecting', '正在连接...');
+            
             ws = new WebSocket(`wss://gpa-calculator.1810601166hank.workers.dev/ws`);
             
             ws.onopen = () => {
-                console.log('WebSocket connected');
-                document.getElementById('connectionStatus').className = 'connected';
-                document.getElementById('connectionStatus').textContent = '已连接';
+                updateConnectionStatus('connected', '已连接');
                 reconnectAttempts = 0;
             };
-
+            
             ws.onclose = () => {
-                console.log('WebSocket disconnected');
-                document.getElementById('connectionStatus').className = 'disconnected';
-                document.getElementById('connectionStatus').textContent = '未连接';
+                updateConnectionStatus('disconnected', '连接断开');
                 
                 if (reconnectAttempts < maxReconnectAttempts) {
-                    reconnectAttempts++;
-                    setTimeout(connectWebSocket, 1000 * Math.pow(2, reconnectAttempts));
+                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+                    setTimeout(() => {
+                        reconnectAttempts++;
+                        connectWebSocket();
+                    }, delay);
+                } else {
+                    showError('无法连接到服务器，请刷新页面重试');
                 }
             };
-
+            
             ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                
-                switch (data.type) {
-                    case 'init':
-                        displayCourses(data.courses);
-                        updateOverallGPA(data.courses);
-                        break;
+                try {
+                    const data = JSON.parse(event.data);
                     
-                    case 'added':
-                        const courses = Array.from(document.querySelectorAll('#coursesList tr'))
-                            .map(row => ({
-                                id: parseInt(row.dataset.id),
-                                name: row.cells[0].textContent,
-                                regular_score: parseFloat(row.cells[1].textContent),
-                                exam_scores: row.cells[2].textContent,
-                                final_score: parseFloat(row.cells[3].textContent),
-                                gpa: parseFloat(row.cells[4].textContent)
-                            }));
-                        courses.unshift(data.course);
-                        displayCourses(courses);
-                        updateOverallGPA(courses);
-                        break;
-                    
-                    case 'deleted':
-                        const row = document.querySelector(`#coursesList tr[data-id="${data.id}"]`);
-                        if (row) {
-                            row.remove();
-                            const remainingCourses = Array.from(document.querySelectorAll('#coursesList tr'))
+                    switch (data.type) {
+                        case 'init':
+                            displayCourses(data.courses);
+                            break;
+                            
+                        case 'added':
+                            const courses = Array.from(document.querySelectorAll('#coursesList tr'))
                                 .map(row => ({
                                     id: parseInt(row.dataset.id),
                                     name: row.cells[0].textContent,
@@ -155,137 +198,218 @@
                                     final_score: parseFloat(row.cells[3].textContent),
                                     gpa: parseFloat(row.cells[4].textContent)
                                 }));
-                            updateOverallGPA(remainingCourses);
-                        }
-                        break;
-                    
-                    case 'error':
-                        console.error('Server error:', data.message);
-                        alert('发生错误: ' + data.message);
-                        break;
+                            courses.unshift(data.course);
+                            displayCourses(courses);
+                            document.getElementById('courseForm').reset();
+                            break;
+                            
+                        case 'deleted':
+                            const row = document.querySelector(`tr[data-id="${data.id}"]`);
+                            if (row) {
+                                row.remove();
+                                updateOverallGPA();
+                            }
+                            break;
+                            
+                        case 'error':
+                            showError(data.message);
+                            break;
+                    }
+                } catch (error) {
+                    console.error('Error processing message:', error);
+                    showError('处理数据时发生错误');
                 }
             };
-
+            
             ws.onerror = (error) => {
                 console.error('WebSocket error:', error);
+                showError('连接发生错误');
             };
         }
 
-        // 添加考试成绩输入框
+        function validateInput() {
+            let isValid = true;
+            const errors = {};
+            
+            // 验证课程名称
+            const courseName = document.getElementById('courseName').value.trim();
+            if (!courseName) {
+                errors.courseName = '请输入课程名称';
+                isValid = false;
+            }
+            
+            // 验证平时成绩
+            const regularScore = parseFloat(document.getElementById('regularScore').value);
+            if (isNaN(regularScore) || regularScore < 0 || regularScore > 100) {
+                errors.regularScore = '平时成绩必须在0-100之间';
+                isValid = false;
+            }
+            
+            // 验证考试成绩
+            const examScores = Array.from(document.querySelectorAll('#examScores input'))
+                .map(input => parseFloat(input.value));
+            
+            if (examScores.some(score => isNaN(score) || score < 0 || score > 100)) {
+                errors.examScores = '所有考试成绩必须在0-100之间';
+                isValid = false;
+            }
+            
+            // 显示错误信息
+            ['courseName', 'regularScore', 'examScores'].forEach(field => {
+                const errorElement = document.getElementById(`${field}Error`);
+                errorElement.textContent = errors[field] || '';
+            });
+            
+            return isValid;
+        }
+
         function addExamScore() {
-            const examScores = document.getElementById('examScores');
-            const newInput = document.createElement('div');
-            newInput.className = 'exam-score-input d-flex';
-            newInput.innerHTML = `
-                <input type="number" class="form-control me-2" min="0" max="100" required>
+            const container = document.createElement('div');
+            container.className = 'exam-score-input d-flex';
+            container.innerHTML = `
+                <input type="number" class="form-control me-2" min="0" max="100" step="0.1" required>
                 <button type="button" class="btn btn-danger" onclick="removeExamScore(this)">
                     <i class="bi bi-trash"></i>
                 </button>
             `;
-            examScores.appendChild(newInput);
+            document.getElementById('examScores').appendChild(container);
         }
 
-        // 删除考试成绩输入框
         function removeExamScore(button) {
-            const examScores = document.getElementById('examScores');
-            if (examScores.children.length > 1) {
-                button.parentElement.remove();
+            const container = button.closest('.exam-score-input');
+            if (document.querySelectorAll('.exam-score-input').length > 1) {
+                container.remove();
+            } else {
+                showError('至少需要保留一个考试成绩');
             }
         }
 
-        // 显示课程列表
         function displayCourses(courses) {
-            const coursesList = document.getElementById('coursesList');
-            coursesList.innerHTML = courses.map(course => `
-                <tr data-id="${course.id}">
+            const tbody = document.getElementById('coursesList');
+            tbody.innerHTML = '';
+            
+            courses.forEach(course => {
+                const row = document.createElement('tr');
+                row.dataset.id = course.id;
+                
+                const examScores = JSON.parse(course.exam_scores);
+                
+                row.innerHTML = `
                     <td>${course.name}</td>
                     <td>${course.regular_score}</td>
-                    <td>${course.exam_scores.split(',').join(', ')}</td>
+                    <td>${examScores.join(', ')}</td>
                     <td>${course.final_score.toFixed(2)}</td>
                     <td>${course.gpa.toFixed(2)}</td>
                     <td>
-                        <button class="btn btn-danger btn-sm" onclick="deleteCourse(${course.id})">
+                        <button class="btn btn-sm btn-danger" onclick="deleteCourse(${course.id})">
                             <i class="bi bi-trash"></i>
                         </button>
                     </td>
-                </tr>
-            `).join('');
+                `;
+                
+                tbody.appendChild(row);
+            });
+            
+            updateOverallGPA();
         }
 
-        // 计算总体GPA
-        function updateOverallGPA(courses) {
-            if (courses.length === 0) {
-                document.getElementById('overallGPA').textContent = '0.00';
-                return;
+        function updateOverallGPA() {
+            const courses = Array.from(document.querySelectorAll('#coursesList tr'))
+                .map(row => parseFloat(row.cells[4].textContent));
+            
+            const gpa = courses.length > 0
+                ? (courses.reduce((sum, gpa) => sum + gpa, 0) / courses.length).toFixed(2)
+                : '0.00';
+            
+            document.getElementById('overallGPA').textContent = gpa;
+        }
+
+        async function deleteCourse(id) {
+            try {
+                const row = document.querySelector(`tr[data-id="${id}"]`);
+                if (row) {
+                    row.classList.add('loading');
+                }
+                
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'delete',
+                        id: id
+                    }));
+                } else {
+                    throw new Error('WebSocket未连接');
+                }
+            } catch (error) {
+                console.error('Error deleting course:', error);
+                showError('删除课程失败');
+                
+                const row = document.querySelector(`tr[data-id="${id}"]`);
+                if (row) {
+                    row.classList.remove('loading');
+                }
             }
-            const totalGPA = courses.reduce((sum, course) => sum + course.gpa, 0);
-            const averageGPA = totalGPA / courses.length;
-            document.getElementById('overallGPA').textContent = averageGPA.toFixed(2);
         }
 
-        // 删除课程
-        function deleteCourse(id) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'delete',
-                    id: id
-                }));
-            } else {
-                alert('未连接到服务器，请稍后重试');
-            }
-        }
-
-        // 提交新课程
         document.getElementById('courseForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const examScores = Array.from(document.querySelectorAll('#examScores input'))
-                .map(input => input.value)
-                .join(',');
-
-            const courseData = {
-                name: document.getElementById('courseName').value,
-                regular_score: parseFloat(document.getElementById('regularScore').value),
-                exam_scores: examScores
-            };
-
-            // 计算最终成绩和 GPA
-            const examScoresList = courseData.exam_scores.split(',').map(Number);
-            const avgExamScore = examScoresList.reduce((a, b) => a + b) / examScoresList.length;
-            courseData.final_score = avgExamScore * 0.7 + courseData.regular_score * 0.3;
             
-            // 计算 GPA
-            const score = courseData.final_score;
-            if (score >= 90) courseData.gpa = 4.0;
-            else if (score >= 85) courseData.gpa = 3.7;
-            else if (score >= 80) courseData.gpa = 3.3;
-            else if (score >= 75) courseData.gpa = 3.0;
-            else if (score >= 70) courseData.gpa = 2.7;
-            else if (score >= 65) courseData.gpa = 2.3;
-            else if (score >= 60) courseData.gpa = 2.0;
-            else courseData.gpa = 0.0;
-
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'add',
-                    course: courseData
-                }));
-
-                // 重置表单
-                e.target.reset();
-                document.getElementById('examScores').innerHTML = `
-                    <div class="exam-score-input d-flex">
-                        <input type="number" class="form-control me-2" min="0" max="100" required>
-                        <button type="button" class="btn btn-danger" onclick="removeExamScore(this)">
-                            <i class="bi bi-trash"></i>
-                        </button>
-                    </div>
-                `;
-            } else {
-                alert('未连接到服务器，请稍后重试');
+            if (!validateInput()) {
+                return;
+            }
+            
+            const submitButton = document.getElementById('submitButton');
+            const spinner = submitButton.querySelector('.spinner');
+            
+            try {
+                submitButton.disabled = true;
+                spinner.classList.remove('d-none');
+                
+                const examScores = Array.from(document.querySelectorAll('#examScores input'))
+                    .map(input => parseFloat(input.value));
+                
+                const regularScore = parseFloat(document.getElementById('regularScore').value);
+                const finalScore = (regularScore * 0.3 + examScores.reduce((a, b) => a + b) / examScores.length * 0.7);
+                
+                // GPA计算规则
+                let gpa;
+                if (finalScore >= 90) gpa = 4.0;
+                else if (finalScore >= 85) gpa = 3.7;
+                else if (finalScore >= 82) gpa = 3.3;
+                else if (finalScore >= 78) gpa = 3.0;
+                else if (finalScore >= 75) gpa = 2.7;
+                else if (finalScore >= 72) gpa = 2.3;
+                else if (finalScore >= 68) gpa = 2.0;
+                else if (finalScore >= 64) gpa = 1.5;
+                else if (finalScore >= 60) gpa = 1.0;
+                else gpa = 0;
+                
+                const course = {
+                    name: document.getElementById('courseName').value.trim(),
+                    regular_score: regularScore,
+                    exam_scores: JSON.stringify(examScores),
+                    final_score: finalScore,
+                    gpa: gpa
+                };
+                
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'add',
+                        course: course
+                    }));
+                } else {
+                    throw new Error('WebSocket未连接');
+                }
+                
+            } catch (error) {
+                console.error('Error adding course:', error);
+                showError('添加课程失败');
+            } finally {
+                submitButton.disabled = false;
+                spinner.classList.add('d-none');
             }
         });
 
-        // 初始化 WebSocket 连接
+        // 初始化连接
         connectWebSocket();
     </script>
 </body>
