@@ -103,10 +103,17 @@ async function validateJWT(request, env) {
 export default {
   async fetch(request, env) {
     // 获取请求的origin
-    const origin = request.headers.get('Origin') || 'https://gpa-calculator-3.pages.dev';
+    const origin = request.headers.get('Origin');
+    
+    // 验证origin是否是允许的域名
+    const allowedOrigins = [
+      'https://59a1f0ce.gpa-calculator-3.pages.dev',
+      'https://gpa-calculator-3.pages.dev',
+      'http://localhost:8787',  // 本地开发用
+    ];
     
     const corsHeaders = {
-      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Origin': allowedOrigins.includes(origin) ? origin : allowedOrigins[0],
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, CF-Access-Client-Id, CF-Access-Client-Secret',
       'Access-Control-Allow-Credentials': 'true',
@@ -121,8 +128,10 @@ export default {
     }
 
     try {
-      // 验证JWT令牌（WebSocket连接除外）
+      // 如果是WebSocket连接，跳过JWT验证
       if (!request.url.endsWith('/ws')) {
+        // 暂时注释掉JWT验证，等Cloudflare Access配置完成后再启用
+        /*
         const isValid = await validateJWT(request, env);
         if (!isValid) {
           return new Response(JSON.stringify({
@@ -132,6 +141,7 @@ export default {
             headers: corsHeaders
           });
         }
+        */
       }
 
       // 获取客户端IP

@@ -165,9 +165,13 @@
         const reconnectDelay = 1000;
         let currentRules = null;
 
-        // 检查用户是否已认证
+        // 检查用户是否已认证（暂时禁用认证检查）
         async function checkAuthentication() {
             try {
+                // 暂时返回true，等Cloudflare Access配置完成后再启用认证检查
+                return true;
+                
+                /*
                 const response = await fetch(`${API_BASE_URL}/api/courses`, {
                     method: 'GET',
                     credentials: 'include',
@@ -177,7 +181,6 @@
                 });
                 
                 if (response.status === 401) {
-                    // 未认证，重定向到Cloudflare Access登录页面
                     window.location.href = 'https://hankgpa.cloudflareaccess.com/cdn-cgi/access/login';
                     return false;
                 }
@@ -186,7 +189,6 @@
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 
-                // 显示用户信息
                 const userEmail = response.headers.get('cf-access-authenticated-user-email');
                 if (userEmail) {
                     const userInfo = document.getElementById('userInfo');
@@ -201,6 +203,7 @@
                 }
                 
                 return true;
+                */
             } catch (error) {
                 console.error('认证检查失败:', error);
                 showError('检查认证状态时出错: ' + error.message);
@@ -280,7 +283,7 @@ ${error.stack || '无堆栈信息'}`;
                 
                 ws.onerror = (error) => {
                     console.error('WebSocket错误:', error);
-                    showError('WebSocket连接错误');
+                    showError('WebSocket连接错误，请检查网络连接');
                 };
                 
                 ws.onmessage = (event) => {
@@ -290,7 +293,7 @@ ${error.stack || '无堆栈信息'}`;
                         switch (data.type) {
                             case 'init':
                             case 'update':
-                                displayCourses(data.courses);
+                                displayCourses(data.courses || []);
                                 break;
                             
                             case 'rules':
