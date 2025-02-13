@@ -35,33 +35,41 @@
             position: fixed;
             bottom: 20px;
             right: 20px;
-            background: #f8d7da;
-            color: #721c24;
-            padding: 10px 20px;
+            min-width: 300px;
+            max-width: 500px;
+            z-index: 1050;
+        }
+        .debug-info {
+            font-family: monospace;
+            font-size: 0.85em;
+            white-space: pre-wrap;
+            word-break: break-all;
+            background: #f8f9fa;
+            padding: 8px;
+            margin-top: 8px;
             border-radius: 4px;
-            display: none;
-            z-index: 1000;
-            max-width: 300px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        }
-        .spinner {
-            display: inline-block;
-            width: 1em;
-            height: 1em;
-            border: 2px solid currentColor;
-            border-right-color: transparent;
-            border-radius: 50%;
-            animation: spinner-rotation 0.75s linear infinite;
-        }
-        @keyframes spinner-rotation {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            border: 1px solid #dee2e6;
         }
     </style>
 </head>
 <body>
     <div id="connectionStatus" class="disconnected">
         未连接
+    </div>
+
+    <!-- 错误提示窗口 -->
+    <div class="toast-container">
+        <div id="errorToast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header bg-danger text-white">
+                <i class="bi bi-exclamation-circle me-2"></i>
+                <strong class="me-auto">错误</strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                <div id="errorMessage"></div>
+                <div id="errorDebug" class="debug-info" style="display: none;"></div>
+            </div>
+        </div>
     </div>
 
     <div id="errorToast"></div>
@@ -140,13 +148,28 @@
         const maxReconnectAttempts = 5;
         const reconnectDelay = 1000; // 初始重连延迟（毫秒）
 
-        function showError(message, duration = 3000) {
-            const toast = document.getElementById('errorToast');
-            toast.textContent = message;
-            toast.style.display = 'block';
-            setTimeout(() => {
-                toast.style.display = 'none';
-            }, duration);
+        function showError(message, error = null) {
+            const errorToast = document.getElementById('errorToast');
+            const errorMessage = document.getElementById('errorMessage');
+            const errorDebug = document.getElementById('errorDebug');
+            
+            errorMessage.textContent = message;
+            
+            // 如果有错误对象，显示详细信息
+            if (error) {
+                errorDebug.textContent = `错误详情：
+${error.name}: ${error.message}
+${error.stack || '无堆栈信息'}`;
+                errorDebug.style.display = 'block';
+            } else {
+                errorDebug.style.display = 'none';
+            }
+            
+            const toast = new bootstrap.Toast(errorToast, {
+                autohide: true,
+                delay: 5000
+            });
+            toast.show();
         }
 
         function updateConnectionStatus(status, message) {
@@ -300,6 +323,7 @@
                     }
                 } catch (error) {
                     console.error('Error parsing exam scores:', error);
+                    showError('解析考试分数时出错', error);
                     examScores = [];
                 }
                 
@@ -421,5 +445,6 @@
         // 初始化连接
         connectWebSocket();
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
