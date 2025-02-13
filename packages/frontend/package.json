@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "cp -r src/* dist/",
+    "build": "mkdir -p dist && cp -r src/* dist/",
     "dev": "http-server src",
     "deploy": "wrangler pages deploy dist"
   },
