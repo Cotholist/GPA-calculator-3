@@ -158,22 +158,32 @@
 
     <script>
         const API_BASE_URL = 'https://gpa-calculator.1810601166hank.workers.dev';
+        const WEBSOCKET_URL = 'wss://gpa-calculator.1810601166hank.workers.dev/ws';
         let ws;
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 5;
-        const reconnectDelay = 1000; // 初始重连延迟（毫秒）
+        const reconnectDelay = 1000;
+        let currentRules = null;
 
         // 检查用户是否已认证
         async function checkAuthentication() {
             try {
                 const response = await fetch(`${API_BASE_URL}/api/courses`, {
-                    credentials: 'include'
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
                 });
                 
                 if (response.status === 401) {
                     // 未认证，重定向到Cloudflare Access登录页面
                     window.location.href = 'https://hankgpa.cloudflareaccess.com/cdn-cgi/access/login';
                     return false;
+                }
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 
                 // 显示用户信息
@@ -192,7 +202,8 @@
                 
                 return true;
             } catch (error) {
-                showError('检查认证状态时出错', error);
+                console.error('认证检查失败:', error);
+                showError('检查认证状态时出错: ' + error.message);
                 return false;
             }
         }
@@ -240,73 +251,66 @@ ${error.stack || '无堆栈信息'}`;
 
             updateConnectionStatus('connecting', '正在连接...');
             
-            ws = new WebSocket(`wss://gpa-calculator.1810601166hank.workers.dev/ws`);
-            
-            ws.onopen = () => {
-                updateConnectionStatus('connected', '已连接');
-                reconnectAttempts = 0;
-            };
-            
-            ws.onclose = () => {
-                updateConnectionStatus('disconnected', '连接断开');
+            try {
+                ws = new WebSocket(WEBSOCKET_URL);
                 
-                if (reconnectAttempts < maxReconnectAttempts) {
-                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
-                    setTimeout(() => {
-                        reconnectAttempts++;
-                        connectWebSocket();
-                    }, delay);
-                } else {
-                    showError('无法连接到服务器，请刷新页面重试');
-                }
-            };
-            
-            ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
+                ws.onopen = () => {
+                    updateConnectionStatus('connected', '已连接');
+                    reconnectAttempts = 0;
                     
-                    switch (data.type) {
-                        case 'init':
-                            displayCourses(data.courses);
-                            break;
-                            
-                        case 'added':
-                            const courses = Array.from(document.querySelectorAll('#coursesList tr'))
-                                .map(row => ({
-                                    id: parseInt(row.dataset.id),
-                                    name: row.cells[0].textContent,
-                                    regular_score: parseFloat(row.cells[1].textContent),
-                                    exam_scores: row.cells[2].textContent,
-                                    final_score: parseFloat(row.cells[3].textContent),
-                                    gpa: parseFloat(row.cells[4].textContent)
-                                }));
-                            courses.unshift(data.course);
-                            displayCourses(courses);
-                            document.getElementById('courseForm').reset();
-                            break;
-                            
-                        case 'deleted':
-                            const row = document.querySelector(`tr[data-id="${data.id}"]`);
-                            if (row) {
-                                row.remove();
-                                updateOverallGPA();
-                            }
-                            break;
-                            
-                        case 'error':
-                            showError(data.message);
-                            break;
+                    // 获取GPA规则
+                    ws.send(JSON.stringify({
+                        type: 'get_rules'
+                    }));
+                };
+                
+                ws.onclose = () => {
+                    updateConnectionStatus('disconnected', '连接断开');
+                    
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+                        setTimeout(() => {
+                            reconnectAttempts++;
+                            connectWebSocket();
+                        }, delay);
+                    } else {
+                        showError('无法连接到服务器，请刷新页面重试');
                     }
-                } catch (error) {
-                    console.error('Error processing message:', error);
-                    showError('处理数据时发生错误');
-                }
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                showError('连接发生错误');
-            };
+                };
+                
+                ws.onerror = (error) => {
+                    console.error('WebSocket错误:', error);
+                    showError('WebSocket连接错误');
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        switch (data.type) {
+                            case 'init':
+                            case 'update':
+                                displayCourses(data.courses);
+                                break;
+                            
+                            case 'rules':
+                                currentRules = data.rules;
+                                displayRules(data.rules);
+                                break;
+                            
+                            case 'error':
+                                showError(data.message);
+                                break;
+                        }
+                    } catch (error) {
+                        console.error('处理服务器消息时出错:', error);
+                        showError('处理服务器消息时出错: ' + error.message);
+                    }
+                };
+            } catch (error) {
+                console.error('创建WebSocket连接时出错:', error);
+                showError('创建WebSocket连接时出错: ' + error.message);
+            }
         }
 
         function validateInput() {

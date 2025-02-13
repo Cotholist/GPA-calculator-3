@@ -102,12 +102,23 @@ async function validateJWT(request, env) {
 
 export default {
   async fetch(request, env) {
+    // 获取请求的origin
+    const origin = request.headers.get('Origin') || 'https://gpa-calculator-3.pages.dev';
+    
     const corsHeaders = {
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, CF-Access-Client-Id, CF-Access-Client-Secret',
+      'Access-Control-Allow-Credentials': 'true',
       'Content-Type': 'application/json; charset=utf-8'
     };
+
+    // 处理预检请求
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { 
+        headers: corsHeaders
+      });
+    }
 
     try {
       // 验证JWT令牌（WebSocket连接除外）
@@ -129,10 +140,6 @@ export default {
       // 检查速率限制
       checkRateLimit(clientIP);
       
-      if (request.method === 'OPTIONS') {
-        return new Response(null, { headers: corsHeaders });
-      }
-
       const url = new URL(request.url);
       const path = url.pathname;
 
