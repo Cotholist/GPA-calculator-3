@@ -21,6 +21,20 @@ function validateCourse(course) {
   }
 }
 
+// 计算GPA的函数
+async function calculateGPA(score, env) {
+  try {
+    const { results } = await env.DB.prepare(
+      'SELECT gpa_value FROM gpa_rules WHERE ? BETWEEN min_score AND max_score'
+    ).bind(score).all();
+    
+    return results.length > 0 ? results[0].gpa_value : 0;
+  } catch (error) {
+    console.error('计算GPA时出错:', error);
+    return 0;
+  }
+}
+
 // 速率限制Map
 const ipRequestCounts = new Map();
 
@@ -49,16 +63,66 @@ function checkRateLimit(ip) {
   requests.push(now);
 }
 
+// 验证Cloudflare Access JWT令牌
+async function validateJWT(request, env) {
+  try {
+    // 获取CF Access验证信息
+    const cfAccessEmail = request.headers.get('cf-access-authenticated-user-email');
+    const cfAccessJWT = request.headers.get('cf-access-jwt-assertion');
+    
+    if (!cfAccessEmail || !cfAccessJWT) {
+      throw new Error('未经授权的访问');
+    }
+
+    // 验证JWT令牌
+    const audience = env.CF_ACCESS_AUD;
+    const response = await fetch('https://hankgpa.cloudflareaccess.com/cdn-cgi/access/certs', {
+      cf: {
+        cacheTtl: 12 * 60 * 60,
+        cacheEverything: true,
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error('无法获取验证密钥');
+    }
+
+    // 将用户信息添加到请求中
+    request.user = {
+      email: cfAccessEmail,
+      jwt: cfAccessJWT
+    };
+
+    return true;
+  } catch (error) {
+    console.error('JWT验证失败:', error);
+    return false;
+  }
+}
+
 export default {
   async fetch(request, env) {
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, CF-Access-Client-Id, CF-Access-Client-Secret',
       'Content-Type': 'application/json; charset=utf-8'
     };
 
     try {
+      // 验证JWT令牌（WebSocket连接除外）
+      if (!request.url.endsWith('/ws')) {
+        const isValid = await validateJWT(request, env);
+        if (!isValid) {
+          return new Response(JSON.stringify({
+            error: '未经授权的访问'
+          }), {
+            status: 401,
+            headers: corsHeaders
+          });
+        }
+      }
+
       // 获取客户端IP
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
       
@@ -83,9 +147,12 @@ export default {
         server.accept();
         
         try {
+          // 获取用户特定的课程列表
+          const userEmail = request.headers.get('cf-access-authenticated-user-email');
           const { results } = await env.DB.prepare(
-            'SELECT * FROM courses ORDER BY created_at DESC'
-          ).all();
+            'SELECT * FROM courses WHERE user_email = ? ORDER BY created_at DESC'
+          ).bind(userEmail).all();
+          
           server.send(JSON.stringify({ type: 'init', courses: results }));
         } catch (error) {
           server.send(JSON.stringify({
@@ -99,38 +166,121 @@ export default {
             const data = JSON.parse(event.data);
             
             switch (data.type) {
-              case 'add':
-                const course = data.course;
-                validateCourse(course);
+              case 'add_course': {
+                validateCourse(data.course);
                 
-                const { success, meta } = await env.DB.prepare(
-                  'INSERT INTO courses (name, regular_score, exam_scores, final_score, gpa) VALUES (?, ?, ?, ?, ?)'
-                ).bind(
-                  course.name,
-                  course.regular_score,
-                  course.exam_scores,
-                  course.final_score,
-                  course.gpa
+                const examScores = JSON.parse(data.course.exam_scores);
+                const regularScore = parseFloat(data.course.regular_score);
+                const examAverage = examScores.reduce((a, b) => a + parseFloat(b), 0) / examScores.length;
+                
+                // 计算最终成绩 (40% 平时成绩 + 60% 考试平均分)
+                const finalScore = regularScore * 0.4 + examAverage * 0.6;
+                
+                // 计算GPA
+                const gpa = await calculateGPA(finalScore, env);
+                
+                const { success } = await env.DB.prepare(`
+                  INSERT INTO courses (name, regular_score, exam_scores, final_score, gpa, user_email)
+                  VALUES (?, ?, ?, ?, ?, ?)
+                `).bind(
+                  data.course.name,
+                  regularScore,
+                  data.course.exam_scores,
+                  finalScore,
+                  gpa,
+                  request.user.email
                 ).run();
                 
-                if (success) {
-                  server.send(JSON.stringify({
-                    type: 'added',
-                    course: { ...course, id: meta.last_row_id }
-                  }));
-                } else {
+                if (!success) {
                   throw new Error('添加课程失败');
                 }
-                break;
                 
-              case 'delete':
+                // 获取更新后的课程列表（按最终成绩降序排序）
+                const { results } = await env.DB.prepare(
+                  'SELECT * FROM courses WHERE user_email = ? ORDER BY final_score DESC'
+                ).bind(request.user.email).all();
+                
+                // 广播更新后的课程列表
+                server.send(JSON.stringify({
+                  type: 'update',
+                  courses: results
+                }));
+                break;
+              }
+              
+              case 'get_rules': {
+                const { results } = await env.DB.prepare(
+                  'SELECT * FROM gpa_rules ORDER BY min_score DESC'
+                ).all();
+                
+                server.send(JSON.stringify({
+                  type: 'rules',
+                  rules: results
+                }));
+                break;
+              }
+              
+              case 'update_rules': {
+                const rules = data.rules;
+                
+                // 验证规则
+                if (!Array.isArray(rules)) {
+                  throw new Error('无效的GPA规则格式');
+                }
+                
+                // 开始事务
+                await env.DB.prepare('BEGIN TRANSACTION').run();
+                
+                try {
+                  // 清空现有规则
+                  await env.DB.prepare('DELETE FROM gpa_rules').run();
+                  
+                  // 插入新规则
+                  for (const rule of rules) {
+                    await env.DB.prepare(`
+                      INSERT INTO gpa_rules (min_score, max_score, gpa_value)
+                      VALUES (?, ?, ?)
+                    `).bind(rule.min_score, rule.max_score, rule.gpa_value).run();
+                  }
+                  
+                  // 提交事务
+                  await env.DB.prepare('COMMIT').run();
+                  
+                  // 重新计算所有课程的GPA
+                  const courses = await env.DB.prepare('SELECT * FROM courses').all();
+                  for (const course of courses.results) {
+                    const gpa = await calculateGPA(course.final_score, env);
+                    await env.DB.prepare('UPDATE courses SET gpa = ? WHERE id = ?')
+                      .bind(gpa, course.id).run();
+                  }
+                  
+                  // 获取更新后的课程列表
+                  const { results } = await env.DB.prepare(
+                    'SELECT * FROM courses WHERE user_email = ? ORDER BY final_score DESC'
+                  ).bind(request.user.email).all();
+                  
+                  // 广播更新
+                  server.send(JSON.stringify({
+                    type: 'update',
+                    courses: results
+                  }));
+                  
+                } catch (error) {
+                  // 回滚事务
+                  await env.DB.prepare('ROLLBACK').run();
+                  throw error;
+                }
+                break;
+              }
+              
+              case 'delete_course': {
                 if (!data.id || isNaN(data.id)) {
                   throw new Error('无效的课程ID');
                 }
                 
                 const result = await env.DB.prepare(
-                  'DELETE FROM courses WHERE id = ?'
-                ).bind(data.id).run();
+                  'DELETE FROM courses WHERE id = ? AND user_email = ?'
+                ).bind(data.id, request.user.email).run();
                 
                 if (result.success) {
                   server.send(JSON.stringify({
@@ -141,6 +291,7 @@ export default {
                   throw new Error('删除课程失败');
                 }
                 break;
+              }
             }
           } catch (error) {
             server.send(JSON.stringify({
@@ -160,8 +311,8 @@ export default {
         if (request.method === 'GET') {
           try {
             const { results } = await env.DB.prepare(
-              'SELECT * FROM courses ORDER BY created_at DESC'
-            ).all();
+              'SELECT * FROM courses WHERE user_email = ? ORDER BY created_at DESC'
+            ).bind(request.user.email).all();
             
             return new Response(JSON.stringify(results), {
               headers: {
@@ -185,14 +336,25 @@ export default {
             const data = await request.json();
             validateCourse(data);
             
+            const examScores = JSON.parse(data.exam_scores);
+            const regularScore = parseFloat(data.regular_score);
+            const examAverage = examScores.reduce((a, b) => a + parseFloat(b), 0) / examScores.length;
+            
+            // 计算最终成绩 (40% 平时成绩 + 60% 考试平均分)
+            const finalScore = regularScore * 0.4 + examAverage * 0.6;
+            
+            // 计算GPA
+            const gpa = await calculateGPA(finalScore, env);
+            
             const { success, meta } = await env.DB.prepare(
-              'INSERT INTO courses (name, regular_score, exam_scores, final_score, gpa) VALUES (?, ?, ?, ?, ?)'
+              'INSERT INTO courses (name, regular_score, exam_scores, final_score, gpa, user_email) VALUES (?, ?, ?, ?, ?, ?)'
             ).bind(
               data.name,
-              data.regular_score,
+              regularScore,
               data.exam_scores,
-              data.final_score || 0,
-              data.gpa || 0
+              finalScore,
+              gpa,
+              request.user.email
             ).run();
             
             if (success) {
@@ -228,7 +390,10 @@ export default {
             throw new Error('无效的课程ID');
           }
           
-          const result = await env.DB.prepare('DELETE FROM courses WHERE id = ?').bind(id).run();
+          const result = await env.DB.prepare(
+            'DELETE FROM courses WHERE id = ? AND user_email = ?'
+          ).bind(id, request.user.email).run();
+          
           if (result.success) {
             return new Response(null, {
               headers: corsHeaders
