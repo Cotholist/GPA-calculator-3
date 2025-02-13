@@ -4,5 +4,5 @@ compatibility_date = "2024-02-12"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "gpa_calculator_db"
-database_id = "your-database-id"
+database_name = "gpa_calculator_db_new"
+database_id = "8554a497-9fdb-4350-a9a9-e17bcad21b41"

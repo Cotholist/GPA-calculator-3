@@ -55,6 +55,7 @@ export default {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
+      'Content-Type': 'application/json; charset=utf-8'
     };
 
     try {
@@ -164,7 +165,7 @@ export default {
             
             return new Response(JSON.stringify(results), {
               headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json; charset=utf-8',
                 ...corsHeaders
               }
             });
@@ -172,7 +173,7 @@ export default {
             return new Response(JSON.stringify({ error: '获取课程列表失败' }), {
               status: 500,
               headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json; charset=utf-8',
                 ...corsHeaders
               }
             });
@@ -201,7 +202,7 @@ export default {
               };
               return new Response(JSON.stringify(course), {
                 headers: {
-                  'Content-Type': 'application/json',
+                  'Content-Type': 'application/json; charset=utf-8',
                   ...corsHeaders
                 }
               });
@@ -212,7 +213,7 @@ export default {
             return new Response(JSON.stringify({ error: error.message }), {
               status: 400,
               headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json; charset=utf-8',
                 ...corsHeaders
               }
             });
@@ -239,7 +240,7 @@ export default {
           return new Response(JSON.stringify({ error: error.message }), {
             status: 400,
             headers: {
-              'Content-Type': 'application/json',
+              'Content-Type': 'application/json; charset=utf-8',
               ...corsHeaders
             }
           });
@@ -252,7 +253,7 @@ export default {
       return new Response(JSON.stringify({ error: error.message }), {
         status: error.message.includes('请求过于频繁') ? 429 : 500,
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
           ...corsHeaders
         }
       });
