@@ -292,7 +292,16 @@
                 const row = document.createElement('tr');
                 row.dataset.id = course.id;
                 
-                const examScores = JSON.parse(course.exam_scores);
+                let examScores;
+                try {
+                    examScores = Array.isArray(course.exam_scores) ? course.exam_scores : JSON.parse(course.exam_scores);
+                    if (!Array.isArray(examScores)) {
+                        throw new Error('Invalid exam scores format');
+                    }
+                } catch (error) {
+                    console.error('Error parsing exam scores:', error);
+                    examScores = [];
+                }
                 
                 row.innerHTML = `
                     <td>${course.name}</td>
