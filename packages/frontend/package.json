@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "mkdir -p dist && cp -r src/* dist/",
+    "build": "node build.js",
     "dev": "http-server src",
     "deploy": "wrangler pages deploy dist"
   },
   "devDependencies": {
+    "fs-extra": "^11.2.0",
     "http-server": "^14.1.1"
   }
 }
