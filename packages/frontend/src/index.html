@@ -242,7 +242,7 @@
             try {
                 const userInfo = await authManager.fetchAndStoreUserInfo();
                 if (!userInfo) {
-                    window.location.href = 'https://hankgpa.cloudflareaccess.com/cdn-cgi/access/login';
+                    window.location.href = authManager.getLoginUrl();
                     return false;
                 }
 

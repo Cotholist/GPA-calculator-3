@@ -4,6 +4,29 @@ class AuthManager {
         this.tokenKey = 'gpa_jwt_token';
         this.userKey = 'gpa_user_info';
         this.checkInterval = null;
+        
+        // Cloudflare Access配置
+        this.config = {
+            // 使用你的Workers域名作为认证域名
+            authDomain: 'gpa-calculator.1810601166hank.workers.dev',
+            // 应用程序域名
+            appDomain: '59a1f0ce.gpa-calculator-3.pages.dev'
+        };
+    }
+
+    // 获取登录URL
+    getLoginUrl() {
+        return `https://${this.config.authDomain}/cdn-cgi/access/login?redirect_url=https://${this.config.appDomain}`;
+    }
+
+    // 获取登出URL
+    getLogoutUrl() {
+        return `https://${this.config.authDomain}/cdn-cgi/access/logout?redirect_url=https://${this.config.appDomain}`;
+    }
+
+    // 获取身份验证URL
+    getIdentityUrl() {
+        return `https://${this.config.authDomain}/cdn-cgi/access/get-identity`;
     }
 
     // 解析JWT令牌
@@ -25,8 +48,8 @@ class AuthManager {
     // 获取并存储用户信息
     async fetchAndStoreUserInfo() {
         try {
-            const response = await fetch('/cdn-cgi/access/get-identity', {
-                credentials: 'same-origin'
+            const response = await fetch(this.getIdentityUrl(), {
+                credentials: 'include'
             });
 
             if (!response.ok) {
@@ -82,13 +105,13 @@ class AuthManager {
     // 检查会话状态
     async checkSession() {
         try {
-            const response = await fetch('/cdn-cgi/access/get-identity', {
-                credentials: 'same-origin'
+            const response = await fetch(this.getIdentityUrl(), {
+                credentials: 'include'
             });
 
             if (!response.ok) {
                 this.clearSession();
-                window.location.reload();
+                window.location.href = this.getLoginUrl();
                 return false;
             }
 
@@ -96,7 +119,7 @@ class AuthManager {
         } catch (error) {
             console.error('检查会话状态时出错:', error);
             this.clearSession();
-            window.location.reload();
+            window.location.href = this.getLoginUrl();
             return false;
         }
     }
@@ -110,7 +133,7 @@ class AuthManager {
     // 登出
     async logout() {
         this.clearSession();
-        window.location.href = 'https://hankgpa.cloudflareaccess.com/cdn-cgi/access/logout';
+        window.location.href = this.getLogoutUrl();
     }
 }
 
