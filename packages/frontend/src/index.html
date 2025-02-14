@@ -54,12 +54,30 @@
             position: fixed;
             top: 10px;
             left: 10px;
-            padding: 5px 10px;
+            padding: 8px 15px;
             border-radius: 5px;
             font-size: 0.9em;
             background-color: #f8f9fa;
             border: 1px solid #dee2e6;
             z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .user-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background-color: #007bff;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .user-name {
+            font-weight: 500;
         }
     </style>
 </head>
@@ -68,8 +86,17 @@
         未连接
     </div>
 
-    <div id="userInfo" class="user-info">
-        <!-- 用户信息将通过JavaScript动态添加 -->
+    <div id="userInfo" class="user-info" style="display: none;">
+        <div class="user-avatar">
+            <!-- 用户头像或首字母将通过JavaScript动态添加 -->
+        </div>
+        <div class="user-details">
+            <div class="user-name"><!-- 用户名将通过JavaScript动态添加 --></div>
+            <small class="user-email text-muted"><!-- 邮箱将通过JavaScript动态添加 --></small>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" onclick="handleLogout()">
+            退出登录
+        </button>
     </div>
 
     <!-- 错误提示窗口 -->
@@ -86,8 +113,6 @@
             </div>
         </div>
     </div>
-
-    <div id="errorToast"></div>
 
     <div class="container mt-5">
         <h1 class="text-center mb-4">GPA 计算器</h1>
@@ -135,6 +160,27 @@
             </form>
         </div>
 
+        <!-- GPA规则配置面板 -->
+        <div class="course-form mb-4">
+            <div class="d-flex justify-content-between align-items-center">
+                <h3>GPA 计算规则</h3>
+                <button type="button" class="btn btn-primary" onclick="editRules()">
+                    编辑规则
+                </button>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>分数范围</th>
+                            <th>GPA值</th>
+                        </tr>
+                    </thead>
+                    <tbody id="gpaRulesList"></tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- 课程列表 -->
         <div class="courses-list">
             <h3>课程列表</h3>
@@ -142,9 +188,10 @@
                 <table class="table table-striped">
                     <thead>
                         <tr>
+                            <th>排名</th>
                             <th>课程名称</th>
-                            <th>平时成绩</th>
-                            <th>考试成绩</th>
+                            <th>平时成绩<br><small class="text-muted">(40%)</small></th>
+                            <th>考试成绩<br><small class="text-muted">(60%)</small></th>
                             <th>最终成绩</th>
                             <th>GPA</th>
                             <th>操作</th>
@@ -156,7 +203,9 @@
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        import { authManager } from './js/auth.js';
+
         const API_BASE_URL = 'https://gpa-calculator.1810601166hank.workers.dev';
         const WEBSOCKET_URL = 'wss://gpa-calculator.1810601166hank.workers.dev/ws';
         let ws;
@@ -165,45 +214,41 @@
         const reconnectDelay = 1000;
         let currentRules = null;
 
-        // 检查用户是否已认证（暂时禁用认证检查）
+        // 更新用户界面
+        function updateUserInterface(userInfo) {
+            const userInfoElement = document.getElementById('userInfo');
+            if (!userInfo) {
+                userInfoElement.style.display = 'none';
+                return;
+            }
+
+            const avatarElement = userInfoElement.querySelector('.user-avatar');
+            const nameElement = userInfoElement.querySelector('.user-name');
+            const emailElement = userInfoElement.querySelector('.user-email');
+
+            // 设置头像（使用用户名首字母）
+            avatarElement.textContent = userInfo.name.charAt(0).toUpperCase();
+
+            // 设置用户名和邮箱
+            nameElement.textContent = userInfo.name;
+            emailElement.textContent = userInfo.email;
+
+            // 显示用户信息区域
+            userInfoElement.style.display = 'flex';
+        }
+
+        // 检查用户是否已认证
         async function checkAuthentication() {
             try {
-                // 暂时返回true，等Cloudflare Access配置完成后再启用认证检查
-                return true;
-                
-                /*
-                const response = await fetch(`${API_BASE_URL}/api/courses`, {
-                    method: 'GET',
-                    credentials: 'include',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                });
-                
-                if (response.status === 401) {
+                const userInfo = await authManager.fetchAndStoreUserInfo();
+                if (!userInfo) {
                     window.location.href = 'https://hankgpa.cloudflareaccess.com/cdn-cgi/access/login';
                     return false;
                 }
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const userEmail = response.headers.get('cf-access-authenticated-user-email');
-                if (userEmail) {
-                    const userInfo = document.getElementById('userInfo');
-                    userInfo.innerHTML = `
-                        <div>
-                            <strong>当前用户：</strong>${userEmail}
-                            <button class="btn btn-sm btn-outline-secondary ms-2" onclick="logout()">
-                                退出登录
-                            </button>
-                        </div>
-                    `;
-                }
-                
+
+                updateUserInterface(userInfo);
+                authManager.startSessionMonitor();
                 return true;
-                */
             } catch (error) {
                 console.error('认证检查失败:', error);
                 showError('检查认证状态时出错: ' + error.message);
@@ -211,40 +256,10 @@
             }
         }
 
-        // 退出登录
-        function logout() {
-            window.location.href = 'https://hankgpa.cloudflareaccess.com/cdn-cgi/access/logout';
-        }
-
-        function showError(message, error = null) {
-            const errorToast = document.getElementById('errorToast');
-            const errorMessage = document.getElementById('errorMessage');
-            const errorDebug = document.getElementById('errorDebug');
-            
-            errorMessage.textContent = message;
-            
-            // 如果有错误对象，显示详细信息
-            if (error) {
-                errorDebug.textContent = `错误详情：
-${error.name}: ${error.message}
-${error.stack || '无堆栈信息'}`;
-                errorDebug.style.display = 'block';
-            } else {
-                errorDebug.style.display = 'none';
-            }
-            
-            const toast = new bootstrap.Toast(errorToast, {
-                autohide: true,
-                delay: 5000
-            });
-            toast.show();
-        }
-
-        function updateConnectionStatus(status, message) {
-            const statusElement = document.getElementById('connectionStatus');
-            statusElement.className = status;
-            statusElement.textContent = message;
-        }
+        // 处理登出
+        window.handleLogout = async () => {
+            await authManager.logout();
+        };
 
         // WebSocket连接
         async function connectWebSocket() {
@@ -377,7 +392,7 @@ ${error.stack || '无堆栈信息'}`;
             const tbody = document.getElementById('coursesList');
             tbody.innerHTML = '';
             
-            courses.forEach(course => {
+            courses.forEach((course, index) => {
                 const row = document.createElement('tr');
                 row.dataset.id = course.id;
                 
@@ -394,6 +409,7 @@ ${error.stack || '无堆栈信息'}`;
                 }
                 
                 row.innerHTML = `
+                    <td>${index + 1}</td>
                     <td>${course.name}</td>
                     <td>${course.regular_score}</td>
                     <td>${examScores.join(', ')}</td>
@@ -414,7 +430,7 @@ ${error.stack || '无堆栈信息'}`;
 
         function updateOverallGPA() {
             const courses = Array.from(document.querySelectorAll('#coursesList tr'))
-                .map(row => parseFloat(row.cells[4].textContent));
+                .map(row => parseFloat(row.cells[5].textContent));
             
             const gpa = courses.length > 0
                 ? (courses.reduce((sum, gpa) => sum + gpa, 0) / courses.length).toFixed(2)
